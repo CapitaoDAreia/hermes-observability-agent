@@ -1,0 +1,76 @@
+services:
+  ollama-hermes-agent:
+    image: ollama/ollama:latest
+    container_name: ollama-hermes-agent
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_storage:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  
+  ollama-hermes-agent-setup:
+    image: curlimages/curl:latest
+    container_name: ollama-hermes-agent-setup
+    depends_on:
+      ollama-hermes-agent:
+        condition: service_healthy
+    environment:
+      - LLM_MODEL=${LLM_MODEL:-llama3.2}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text}
+    entrypoint: /bin/sh
+    command: >
+      -c "
+      echo 'Fetching models...';
+      
+      echo 'Fetching LLM: $${LLM_MODEL}...';
+      curl -s -X POST http://ollama-hermes-agent:11434/api/pull -d \"{\\\"name\\\": \\\"$${LLM_MODEL}\\\"}\" | grep -v 'digest';
+      
+      echo 'Fetching Embedding: $${EMBEDDING_MODEL}...';
+      curl -s -X POST http://ollama-hermes-agent:11434/api/pull -d \"{\\\"name\\\": \\\"$${EMBEDDING_MODEL}\\\"}\" | grep -v 'digest';
+      
+      echo 'All set!';
+      "
+
+  telemetry-service:
+    build:
+      context: .
+      dockerfile: ./telemetry-service/Dockerfile
+    container_name: telemetry-service
+    environment:
+      - USE_GCP_LOGGING=${USE_GCP_LOGGING}
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
+    volumes:
+      - ./telemetry-service/mocks:/app/mocks
+    ports:
+      - "5000:5000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      timeout: 5s
+      retries: 5
+
+  # Agente de IA (Orquestrador)
+  agent-service:
+    build:
+      context: .
+      dockerfile: ./agent-service/Dockerfile
+    container_name: agent-service
+    depends_on:
+      telemetry-service:
+        condition: service_healthy
+      ollama-hermes-agent:
+        condition: service_started
+    environment:
+      - OPENAI_API_BASE=${OPENAI_API_BASE}
+      - TELEMETRY_SERVICE_URL=${TELEMETRY_SERVICE_URL}
+      - LLM_PROVIDER=${LLM_PROVIDER:-OLLAMA}
+      - LLM_MODEL=${LLM_MODEL}
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
+    ports:
+      - "8000:8000"
+
+volumes:
+  ollama_storage:
