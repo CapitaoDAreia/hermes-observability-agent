@@ -16,17 +16,29 @@ async def handle_alert(request: Request):
         "alert_payload": payload,
         "app_name": app_name,
         "context_data": [],
-        "analysis_report": "",
+        "analysis_report": None,
         "messages": []
     }
     
     try:
         final_state = await app_graph.ainvoke(initial_state)
+        analysis_report = final_state.get("analysis_report")
+        
+        if hasattr(analysis_report, "model_dump"):
+            analysis_data = analysis_report.model_dump()
+        else:
+            analysis_data = {
+                "severity": "UNKNOWN",
+                "title": "Analysis Format Error",
+                "root_cause": "O grafo não retornou um objeto de análise válido.",
+                "evidence": str(analysis_report),
+                "confidence_score": 0.0
+            }
         
         return {
             "status": "processed",
             "app_detected": final_state.get("app_name", app_name),
-            "analysis": final_state.get("analysis_report", "Erro no processamento da análise.")
+            "analysis": analysis_data
         }
     except Exception as e:
         return {
